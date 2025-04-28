@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import TextImageExtractor from "./TextImageExtractor";
 import TextVoiceExtractor from "./TextVoiceExtractor";
 import imageIcon from "../assets/photo.svg";
@@ -15,6 +16,7 @@ const MIN_TEXT_LENGTH = 20;
 const MAX_CHARS = 1500;
 
 function SubmitNews() {
+  const navigate = useNavigate();
   const [text, setText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [inputType, setInputType] = useState("text");
@@ -111,59 +113,98 @@ function SubmitNews() {
     }, 500);
 
     try {
+      // Step 1: Handle URL scraping if needed
       if (inputType === "link") {
+        console.log("Scraping URL...");
         await scrapeUrl(text);
+        console.log("URL scraped successfully");
       }
 
+      // Step 2: Prepare content for analysis
       const contentToAnalyze = scrapedData?.content || text.trim();
+      console.log("Content length for analysis:", contentToAnalyze.length);
       
       if (!contentToAnalyze) {
         throw new Error("لا يمكن تحليل محتوى فارغ");
       }
 
+      // Step 3: Prepare request data
       const requestData = {
-        text: contentToAnalyze,
-        title: scrapedData?.title || '',
-        date: scrapedData?.date || ''
+        text: contentToAnalyze
       };
+      console.log("Sending request to analysis API...");
 
-      const response = await fetch('http://localhost:8000/check/', {
-        signal: AbortSignal.timeout(30000),
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(requestData)
-      });
+      // Step 4: Set up request with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        console.log("Request timed out");
+      }, 60000);
 
-      let data;
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        console.error('Non-JSON response:', text);
-        throw new Error('خطأ في الخادم. الرجاء المحاولة مرة أخرى');
+      try {
+        // Step 5: Make API request
+        const response = await fetch('http://localhost:8000/check/', {
+          signal: controller.signal,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(requestData)
+        });
+        console.log("Received response:", response.status);
+
+        clearTimeout(timeoutId);
+
+        // Step 6: Parse response
+        let data;
+        try {
+          const textResponse = await response.text();
+          console.log("Raw response:", textResponse);
+          data = JSON.parse(textResponse);
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error('خطأ في تحليل استجابة الخادم');
+        }
+
+        // Step 7: Validate response
+        if (!response.ok) {
+          throw new Error(data.message || 'حدث خطأ أثناء تحليل النص');
+        }
+
+        console.log("Analysis result:", data);
+        setProgress(100);
+        setResult(data);
+
+      } catch (fetchError) {
+        // Handle fetch-specific errors
+        if (fetchError.name === 'AbortError') {
+          throw new Error('انتهت مهلة الطلب. يرجى المحاولة مرة أخرى.');
+        }
+        throw fetchError;
       }
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'حدث خطأ أثناء تحليل النص');
-      }
 
-      setProgress(100);
-      setResult(data);
     } catch (err) {
       console.error('Error during check:', err);
+      
+      // Clear any existing progress
+      setProgress(0);
+      
+      // Handle specific error cases
       if (err.name === 'AbortError') {
-        setError('انتهت مهلة الاتصال. الرجاء المحاولة مرة أخرى.');
+        setError('انتهت مهلة الاتصال (60 ثانية). يرجى تحديث الصفحة والمحاولة مرة أخرى.');
       } else if (err.name === 'TypeError' && err.message.includes('NetworkError')) {
-        setError('تعذر الاتصال بالخادم. الرجاء التحقق من اتصالك بالإنترنت.');
+        setError('تعذر الاتصال بالخادم. تأكد من تشغيل الخادم وأن اتصالك بالإنترنت مستقر.');
       } else if (err.message.includes('JSON')) {
-        setError('تلقينا استجابة غير صالحة من الخادم. الرجاء المحاولة مرة أخرى');
+        setError('حدث خطأ في معالجة البيانات. يرجى المحاولة مرة أخرى أو الاتصال بالدعم الفني.');
+      } else if (err.message.includes('تحليل استجابة')) {
+        setError('تعذر تحليل استجابة الخادم. تأكد من صحة البيانات المدخلة وحاول مرة أخرى.');
       } else {
-        setError(err.message || 'حدث خطأ في الاتصال بالخادم');
+        setError(`خطأ في التحليل: ${err.message || 'حدث خطأ غير متوقع'}`);
       }
+      
+      // Reset result
+      setResult(null);
     } finally {
       clearInterval(timer);
       setIsLoading(false);
@@ -305,12 +346,19 @@ function SubmitNews() {
                 style={{ width: `${progress}%` }}
               ></div>
             </div>
-            <p className="text-amber-600 text-center mt-2 text-sm">
-              {progress < 30 ? "جاري تحضير التحليل..." :
-               progress < 60 ? "جاري تحليل المحتوى..." :
-               progress < 90 ? "جاري التحقق من النتائج..." :
-               "اكتمل التحليل"}
-            </p>
+            <div className="flex flex-col items-center mt-2 gap-1">
+              <p className="text-amber-600 text-center text-sm font-medium">
+                {progress < 20 ? "جاري التحقق من المدخلات..." :
+                 progress < 40 ? "جاري تحضير النص للتحليل..." :
+                 progress < 60 ? "جاري تحليل المحتوى..." :
+                 progress < 80 ? "جاري التحقق من موثوقية النص..." :
+                 progress < 100 ? "جاري معالجة النتائج..." :
+                 "اكتمل التحليل"}
+              </p>
+              <p className="text-gray-500 text-xs">
+                {progress < 100 ? "يرجى الانتظار، قد تستغرق العملية بضع ثوانٍ" : ""}
+              </p>
+            </div>
           </div>
         )}
 
@@ -345,7 +393,7 @@ function SubmitNews() {
                     تصنيف الخبر: {result.category}
                   </span>
                 </div>
-                <div className="text-right">
+                <div className="text-right flex flex-col gap-4">
                   <p className="text-xl">
                     <span className="text-gray-700">نتيجة التحليل: هذا الخبر</span>
                     <span className={`font-bold mx-2 ${
@@ -358,6 +406,14 @@ function SubmitNews() {
                        'صحيح وموثوق'}
                     </span>
                   </p>
+                  <button
+                    onClick={() => {
+                      navigate('/dashboard', { state: result });
+                    }}
+                    className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors w-fit mr-auto"
+                  >
+                    عرض التفاصيل
+                  </button>
                 </div>
               </div>
             </div>

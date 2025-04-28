@@ -6,11 +6,11 @@ import About from "./About";
 import { useNavigate } from "react-router-dom";
 
 function Home() {
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   return (
     <div className="min-h-screen mx-10 lg:mx-18 md:mx-12">
       <HeroSection />
-      <div>
+      {/* <div>
         <button
           className="bg-blue-500 text-white font-bold py-2 px-4 rounded mt-4"
           onClick={() => navigate("/dashboard")}
@@ -30,10 +30,10 @@ function Home() {
           </svg>
           go to dashboard
         </button>
-      </div>
+      </div> */}
       <div className="container mx-auto px-4 ">
         <SubmitNews />
-        <LastFakeNews />
+        {/* <LastFakeNews /> */}
         <About />
         <Opinions />
       </div>

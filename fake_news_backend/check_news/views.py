@@ -4,6 +4,8 @@ from rest_framework import status
 from rest_framework.views import APIView
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
+import torch.nn.functional as F
+import string
 import os
 import google.generativeai as genai
 import pytesseract
@@ -60,14 +62,9 @@ class CheckView(APIView):
 
 
     def is_arabized(self, text):
-        prompt = f"Is the following text Arabized (Arabic written in Latin characters)? Answer 'yes' or 'no'.\nText: {text}"
-        try:
-            model = genai.GenerativeModel(model_name="models/gemini-2.0-flash-lite")
-            response = model.generate_content(prompt)
-            answer = response.text.lower().strip()
-            return "yes" in answer
-        except Exception as e:
-            raise Exception(f"Error in is_arabized: {e}")
+        latin_chars = sum(1 for c in text if c in string.ascii_letters)
+        ratio = latin_chars / len(text) if text else 0
+        return ratio > 0.3
 
     def convert_to_fusha(self, text):
         prompt = f"Translate the following Arabized Arabic (written in Latin characters) to Modern Standard Arabic (Fus7a) and return just the translated text only:\n\n{text}"
@@ -153,9 +150,13 @@ class CheckView(APIView):
             # Predict
             with torch.no_grad():
                 outputs = model(**inputs)
+                probs = F.softmax(outputs.logits, dim=1).squeeze().tolist()
+
 
             prediction_id = torch.argmax(outputs.logits, dim=1).item()
             prediction_label = label_map.get(prediction_id, "Unknown")
+
+            confidence = round(probs[prediction_id], 4)
 
             # Get category using Gemini
             try:
@@ -170,7 +171,8 @@ class CheckView(APIView):
                     "prediction": prediction_label,
                     "class_id": prediction_id,
                     "category": category,
-                    "model_used": model_type
+                    "model_used": model_type,
+                    "confidence": confidence
                 },
                 status=status.HTTP_200_OK,
             )
